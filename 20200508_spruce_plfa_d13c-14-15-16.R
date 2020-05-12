@@ -105,9 +105,40 @@ names(pks_1415) <- c('BatchDataFileName', 'DataFileName', 'RetTimeSecs',
                       'MajorHeightnA', 'DisplayDelta1', 'Name', 
                       'TotalPeakArea1') # For Cameron's data, the correction for standard is already done, just needs methylation correction
                       
+# Several sample names did not match between the peak lists and metadata sheets
+# These were getting NA's for months and other metadata
+# TO DO: Could we add a function/feature to let us know which samples we're 
+# missing due to NA? So we can distinguish M1M2 etc from real samples
+# These are the sample names from the peak list
+mismatches <- data.frame(md_b = c('B2_SPRUCE Sept 2014 Plot 21 0-20cm 2g.raw', 
+                                'B2_SPRUCE Sept 2014 Plot 21 50-100cm 6g.raw', 
+                                'B2_SPRUCE Sept 2014 Plot 7 0-20cm 2g.raw', 
+                                'B2_SPRUCE Sept 2014 Plot 7 20-50cm 6g.raw',
+                                'B2_SPRUCE Sept 2014 Plot 7 50-100cm 6g.raw',
+                                'B4_SPRUCE Sept 2014 Plot 4 50-100cm 8g.raw'),
+                         md_d = c('SPRUCE Sept 2014 Plot 21 0-20cm 2g.raw', 
+                                  'SPRUCE Sept 2014 Plot 21 50-100cm 6g.raw', 
+                                  'SPRUCE Sept 2014 Plot 7 0-20cm 2g.raw', 
+                                  'SPRUCE Sept 2014 Plot 7 20-50cm 6g.raw', 
+                                  'SPRUCE Sept 2014 Plot 7 50-100cm 6g.raw',
+                                  'SPRUCE Sept 2014 Plot 4 50-100cm 8g.raw'),
+                         peak_list = c("B2_SPRUCE  Sept Plot 21 0-20cm 2g.raw",
+                                       'B2_SPRUCE Sept Plot 21 50-100cm 6g.raw', 
+                                       'B2_SPRUCE Sept Plot 7 0-20cm 2g.raw', 
+                                       'B2_SPRUCE Sept Plot 7 20-50cm 6g.raw', 
+                                       'B2_SPRUCE Sept Plot 7 50-100cm 6g.raw',
+                                       'B4_SPRUCESept 2014 Plot 4 50-100cm 8g.raw'),
+                         
+                         stringsAsFactors = FALSE)
+
+
 # Create Batch column and reorder columns to match plfayer format
 pks_1415 <- pks_1415 %>% 
+             left_join(mismatches, by = c('BatchDataFileName' = 'peak_list')) %>%
+             mutate(BatchDataFileName = coalesce(md_b, BatchDataFileName),
+                    DataFileName = coalesce(md_d, DataFileName)) %>%
              mutate(Batch = str_extract(BatchDataFileName, 'B[0-9]+(?=_)')) %>%
+
              select('BatchDataFileName', 'Batch', 'DataFileName', 'RetTimeSecs', 
                     'MajorHeightnA', 'TotalPeakArea1', 'DisplayDelta1', 'Name')
 
@@ -191,9 +222,8 @@ md_1415 <- readxl::read_xls(path = paste0('C:\\Users\\Mark\\Dropbox\\',         
                                            '(?<=[A-Za-z][0-9]{1,2}_).+')) %>%
   dplyr:: select(-BatchDataFileName)  # indic_iso_base matches on DataFileName, this is dup
 md_1415[['Month']] <- factor(md_1415[['Month']], 
-                           levels = c('June', 'July', 'August', 
+                           levels = c('June', 'July', 'August', 'Sept',
                                       'October'))
-
 
 # Calculate d13C for bioindicator groups
 ind13_1415 <- lapply(d13c_1415, 
@@ -213,7 +243,7 @@ ind13_1415 <- lapply(d13c_1415,
                                    }  # If use print instead of message(), output gets incorporated into dataframe
 )
 
-
+# This doesn't seem to work anymore. Supposed to return dataframe elements matching listed lipids
 ind13_1415[[3]][ind13_1415[[3]][['Name']] %in% c('22:1', '15:0', '15:0 anteiso', '16:1 w7c'), ]
 # Batch 3 has multiple 22:1 peaks in B3_M1M2_1 half dilution_3.raw
 
@@ -225,6 +255,8 @@ ind13_1415[[11]][ind13_1415[[3]][['Name']] %in% c('22:1', '15:0', '15:0 anteiso'
 # Not sure where the 15:0 anteiso duplicate is
 
 ind13_1415[[11]][ind13_1415[[3]][['Name']] =='16:1 w7c', ]
+
+
 
 
 # Merge lists into single dataframe for each type of analysis
@@ -244,19 +276,32 @@ d13c_1415_df <- filter_outliers(d13c_1415_df, cols = 'd13C_corrected',
 ind13_1415_df <- filter_outliers(ind13_1415_df, cols = 'avg_d13C_corrected', 
                               method = 'iqr')
 
+# Add another column for categorizing into acrtotelm/mesotelm/catotelm to match
+# depth categories provided in manuscsript
+depth_cats <- data.frame(DepthIncrement = c('0-20', '20-50', '50-100', 
+                                            '100-150', '150-200', '200-250'),
+                         DepthCat = c('acrotelm', 'mesotelm', 'catotelm', 
+                                      'catotelm', 'catotelm', 'catotelm'))
+ind13_1415_df <- ind13_1415_df %>%
+  left_join(depth_cats, by = 'DepthIncrement')
+
+
+
 
 # All dates, plots, depths
-ind13_1415_df %>% ggplot(aes(x = Temp, y = avg_d13C_corrected, color = Indicator)) +
+ind13_1415_df %>% 
+  filter(str_detect(DataFileName, 'SPRUCE')) %>%
+ggplot(aes(x = Temp, y = avg_d13C_corrected, color = DepthCat)) +
   geom_point() +
-  geom_smooth(aes(color = Indicator), 
+  geom_smooth(aes(color = DepthCat), 
               method = 'lm', alpha = 0.3) +
-  facet_wrap(~Indicator)
+  facet_grid(Indicator ~ Month)
 
 d13c_1415_df %>% ggplot(aes(x = Temp, y = d13C_corrected, color = Plot)) +
   geom_point() +
   geom_smooth(aes(color = Indicator), 
               method = 'lm', alpha = 0.3) #+
-  facet_wrap(~Indicator)
+  facet_wra(~Indicator)
 
 # Pre-DPH only
 ind13_1415_df %>% 
